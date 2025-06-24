@@ -1,6 +1,3 @@
-theme_set(theme_classic())
-set.seed(5)
-
 # Libraries
 library(visdat)
 library(tidyverse)
@@ -8,6 +5,9 @@ library(sf)
 library(ggplot2)
 library(RColorBrewer)
 library(viridis)
+
+theme_set(theme_classic())
+set.seed(5)
 
 
 #### Pre Processing ####
@@ -45,15 +45,26 @@ unique(lapply(dataset_list, function(df) {
 
 # Check dates align
 for (df in dataset_list) {
-  print(min(df$Month))
-  print(max(df$Month))
-  print(sum(is.na(df$Month)))
+  print(paste("From", min(df$Month), "to", max(df$Month)))
+  print(paste("NAs:", sum(is.na(df$Month))))
 }
     # There are apparently no missing values in any of the month column, but there are blank values
     # Convert blank character values to NA:
 dataset_list <- lapply(dataset_list, function(df) {
   df %>% mutate(across(where(is.character), ~na_if(., "")))
 })
+for (df in dataset_list) {
+  print(paste("From", min(na.omit(df$Month)), "to", max(na.omit(df$Month))))
+  print(paste("NAs:", sum(is.na(df$Month))))
+}
+    # NAs excluded, all the dates align correctly
+    # Checking the police.data website gives confidence that the observations are from the relevant dataset, 
+    # So we can take the month from the dataset name when missing
+for (df_name in names(dataset_list)) {
+  dataset_list[[df_name]]$Month <- paste0("2020-0", match(sub("_Crimes", "", df_name), month.abb))
+  print(paste("From", min(dataset_list[[df_name]]$Month), "to", max(dataset_list[[df_name]]$Month)))
+  print(paste("NAs:", sum(is.na(dataset_list[[df_name]]$Month))))
+}
     
 # Combine the datasets, matched using column name. Missing columns will automatically be populated with NAs. Create an extra column stating which dataset it came from
 Crimes <- bind_rows(
@@ -63,44 +74,72 @@ Crimes <- bind_rows(
   Jul = dataset_list[[4]],
   Aug = dataset_list[[5]],
   Sep = dataset_list[[6]],
-  .id = "Dataset"
 )
 
-rm(Apr_Crimes, May_Crimes, Jun_Crimes, Jul_Crimes, Aug_Crimes, Sep_Crimes, dataset_list, df, column_names)
-
+rm(Apr_Crimes, May_Crimes, Jun_Crimes, Jul_Crimes, Aug_Crimes, Sep_Crimes, dataset_list, df, column_names, df_name)
 
 #### Explore the data ####
 dim(Crimes)
-  # 158k+ observations, 14 columns
+  # 158k+ observations, 13 columns
 vis_dat(Crimes, warn_large_data = FALSE, sort = FALSE)
-  # X is an integer, Longitute and Latitude are numeric, and the rest are character.
-  # There is missingness throughout the data, which needs to be explored
+  # X is an integer, Longitude and Latitude are numeric, and the rest are character.
+  # There is some missingness throughout the data, which needs to be explored
   # Context appears to be completely NA
 vis_miss(Crimes, warn_large_data = FALSE, sort_miss = TRUE)
   # Confirms Context is completely NA and can be dropped
 Crimes$Context <- NULL
   # Last.outcome.category and Crime.ID is 20% missing, spread throughout the data
-  # Aside from Falls.within an Reported.by (which were completely missing for one particular month each), other values are fairly complete, ranging from 3% to 0% missing
-  # From our original variables, only X is complete
-  # A handful of observations appear to be responsible for the missing values in the other columns
-vis_miss(Crimes, warn_large_data = FALSE, sort_miss = TRUE, facet = Dataset)
-  # 7% of the remaining data is complete
+  # Aside from Falls.within and Reported.by (which were completely missing for one particular month each), other values are fairly complete, ranging from 0% to 3% missing
+  # Only X and Month are complete
+  # A handful of observations appear to be responsible for the majority of missing values in the other columns
+vis_miss(Crimes, warn_large_data = FALSE, sort_miss = TRUE, facet = Month)
+  # 7.4% of the remaining data is missing
 
 sapply(Crimes, function(col) length(unique(na.omit(col))) == 1)
   # Falls.within and Reported.by are redundant, as they only take one value ("West Yorkshire Police")
 
 sapply(Crimes, function(col) length(unique(na.omit(col))) - length(na.omit(col)) == 0)
   # No columns are completely unique
-for (Mon in unique(Crimes$Dataset)) {
-  df <- Crimes[Crimes$Dataset == Mon, ]
+for (Mon in unique(Crimes$Month)) {
+  df <- Crimes[Crimes$Month == Mon, ]
   print(Mon)
   print(
     sapply(df, function(col) length(unique(na.omit(col))) - length(na.omit(col)) == 0)
   )
 }
-  # But it is a unique identifier (as per the police data website) to each value per sub-dataset, so we can remove as it is also redundant
+  # But X and Crime ID are a unique identifier (as per the police data website) to each value per month, so we can remove as it is also redundant
   # As per the data.police.uk website, LSOA.code and LSOA.name both relate to a defined neighbourhood - both are therefore not needed, and only the more descriptive will be kept
-Crimes = Crimes %>% select(-c(X, Crime.ID, Reported.by, Falls.within))
+    #Remove redundant columns, convert Month to date, and convert latitude and longitude to sf coordinates
+Crimes <- Crimes %>%
+  select(-c(X, Crime.ID, Reported.by, Falls.within, LSOA.code)) %>%
+  mutate(Month = as.Date(paste0(Month, "-01")))
+  
+
+# Re-review the data structure:
+vis_dat(Crimes, warn_large_data = FALSE, sort = FALSE)
+vis_miss(Crimes, warn_large_data = FALSE, sort_miss = TRUE)
+vis_miss(Crimes, warn_large_data = FALSE, sort_miss = TRUE, facet = Month)
+  # Only 4.7% of the data is now missing
+  # The majority is from last.outcome.category, which has 20% missingness
+  # There are a handful of observations which now only have a Month value, which can be removed
+Crimes <- Crimes %>% filter(!if_all(-Month, is.na))
+  # And several that are missing locational data
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 head(Crimes)
 #Single Column Explore: Crime.type, Last.outcome.category, Month/Dataset, LSOA.name, Location, Long/Lat
