@@ -5,6 +5,7 @@ library(sf)
 library(ggplot2)
 library(RColorBrewer)
 library(viridis)
+library(scales)
 
 theme_set(theme_classic())
 set.seed(5)
@@ -123,26 +124,9 @@ vis_miss(Crimes, warn_large_data = FALSE, sort_miss = TRUE, facet = Month)
   # The majority is from last.outcome.category, which has 20% missingness
   # There are a handful of observations which now only have a Month value, which can be removed
 Crimes <- Crimes %>% filter(!if_all(-Month, is.na))
-  # And several that are missing locational data
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 head(Crimes)
-#Single Column Explore: Crime.type, Last.outcome.category, Month/Dataset, LSOA.name, Location, Long/Lat
+#Single Variate Explore: Crime.type, Last.outcome.category, Month, LSOA.name, Location, Long/Lat
   #Crime.type
 crime_counts <- table(Crimes$Crime.type, useNA = "ifany") %>%
   as.data.frame() %>%
@@ -155,16 +139,23 @@ crime_counts <- table(Crimes$Crime.type, useNA = "ifany") %>%
 ggplot(
   data = crime_counts, 
   aes(x = Frequency, y = reorder(Crime_Type, Frequency))) +
-  geom_bar(stat = "identity", fill="blue3") +
-  geom_text(aes(label = Frequency), hjust = -0.1, size = 3) + 
+  geom_segment(aes(x = 0, xend = Frequency, 
+                   y = reorder(Crime_Type, Frequency), 
+                   yend = reorder(Crime_Type, Frequency)),
+               color = "grey80", linewidth = 1, linetype = "longdash") +
+  geom_point(shape = 21, fill = "blue3", color = "black", size = 4) +
+  geom_text(aes(label = comma(Frequency)), hjust = -0.3, size = 3) +
+  scale_x_continuous(labels = comma, expand = expansion(mult = c(0, 0.15))) +
   labs(
     title = "Distribution of Crime Types",
     subtitle = "West Yorkshire Police, Apr to Sept 2020",
     y = "Crime Type",
     x = "Frequency") +
   theme(legend.position = "none")
- 
 
+
+
+  # Last.outcome.category
 outcome_counts <- table(Crimes$Last.outcome.category, useNA = "ifany") %>%
   as.data.frame() %>%
   mutate(
@@ -176,16 +167,21 @@ outcome_counts <- table(Crimes$Last.outcome.category, useNA = "ifany") %>%
 ggplot(
   data = outcome_counts, 
   aes(x = Frequency, y = reorder(Outcome, Frequency))) +
-  geom_bar(stat = "identity", fill="blue3") +
-  geom_text(aes(label = Frequency), hjust = -0.1, size = 3) + 
+  geom_segment(aes(x = 0, xend = Frequency, 
+                   y = reorder(Outcome, Frequency), 
+                   yend = reorder(Outcome, Frequency)),
+               color = "grey80", linewidth = 1, linetype = "longdash") +
+  geom_point(shape = 21, fill = "blue3", color = "black", size = 4) +
+  geom_text(aes(label = comma(Frequency)), hjust = -0.3, size = 3) +
+  scale_x_continuous(labels = comma, expand = expansion(mult = c(0, 0.15))) +
   labs(
     title = "Distribution of Outcomes",
     subtitle = "West Yorkshire Police, Apr to Sept 2020",
-    y = "Outcome",
+    y = "Crime Type",
     x = "Frequency") +
   theme(legend.position = "none")
 
-
+  # Months
 Month_counts <- table(Crimes$Month, useNA = "ifany") %>%
   as.data.frame() %>%
   mutate(
@@ -198,7 +194,8 @@ ggplot(
   data = Month_counts, 
   aes(x = Frequency, y = Month)) +
   geom_bar(stat = "identity", fill="blue3") +
-  geom_text(aes(label = Frequency), hjust = -0.1, size = 3) + 
+  geom_text(aes(label = comma(Frequency)), hjust = -0.3, size = 3) +
+  scale_x_continuous(labels = comma, expand = expansion(mult = c(0, 0.1))) +
   scale_y_discrete(limits=rev) + 
   labs(
     title = "Distribution of Observations by Month",
@@ -207,7 +204,7 @@ ggplot(
     x = "Frequency") +
   theme(legend.position = "none")
 
-
+  # LSOA names
 LSOA_counts <- table(Crimes$LSOA.name, useNA = "ifany") %>%
   as.data.frame() %>%
   mutate(
@@ -219,14 +216,150 @@ LSOA_counts <- table(Crimes$LSOA.name, useNA = "ifany") %>%
 ggplot(
   data = LSOA_counts, 
   aes(x = Frequency, y = reorder(LSOA.name, Frequency))) +
-  geom_bar(stat = "identity", fill="blue3") +
-  geom_text(aes(label = Frequency), hjust = -0.1, size = 3) + 
+  geom_segment(aes(x = 0, xend = Frequency, 
+                   y = reorder(LSOA.name, Frequency), 
+                   yend = reorder(LSOA.name, Frequency)),
+               color = "grey80", linewidth = 1, linetype = "longdash") +
+  geom_point(shape = 21, fill = "blue3", color = "black", size = 4) +
+  geom_text(aes(label = comma(Frequency)), hjust = -0.3, size = 3) +
+  scale_x_continuous(labels = comma, expand = expansion(mult = c(0, 0.15))) +
   labs(
-    title = "Distribution of Observations by LSOA Name",
+    title = "Distribution of Observations, by LSOA name",
     subtitle = "West Yorkshire Police, Apr to Sept 2020",
-    y = "LSOA Name",
+    y = "Crime Type",
     x = "Frequency") +
   theme(legend.position = "none")
+
+# There are too many to visualise, let's just look at the top 20 by Frequency
+LSOA_counts.Top20 <- LSOA_counts %>%
+  arrange(desc(Frequency)) %>%
+  slice_head(n = 20)
+
+ggplot(
+  data = LSOA_counts.Top20, 
+  aes(x = Frequency, y = reorder(LSOA.name, Frequency))) +
+  geom_segment(aes(x = 0, xend = Frequency, 
+                   y = reorder(LSOA.name, Frequency), 
+                   yend = reorder(LSOA.name, Frequency)),
+               color = "grey80", linewidth = 1, linetype = "longdash") +
+  geom_point(shape = 21, fill = "blue3", color = "black", size = 4) +
+  geom_text(aes(label = comma(Frequency)), hjust = -0.3, size = 3) +
+  scale_x_continuous(labels = comma, expand = expansion(mult = c(0, 0.15))) +
+  labs(
+    title = "Distribution of Observations, by LSOA name (Top 20)",
+    subtitle = "West Yorkshire Police, Apr to Sept 2020",
+    y = "Crime Type",
+    x = "Frequency") +
+  theme(legend.position = "none")
+
+# We can also group the LSOAs into their wider areas
+Crimes$LSOA.area <- sub("\\s\\d+[A-Z]$", "", Crimes$LSOA.name)
+LSOA_Area_counts <- table(Crimes$LSOA.area, useNA = "ifany") %>%
+  as.data.frame() %>%
+  mutate(
+    LSOA.area = as.character(Var1),
+    LSOA.area = ifelse(is.na(LSOA.area), "Missing Data", LSOA.area)
+  ) %>%
+  select(LSOA.area, Frequency = Freq)
+
+ggplot(
+  data = LSOA_Area_counts, 
+  aes(x = Frequency, y = reorder(LSOA.area, Frequency))) +
+  geom_segment(aes(x = 0, xend = Frequency, 
+                   y = reorder(LSOA.area, Frequency), 
+                   yend = reorder(LSOA.area, Frequency)),
+               color = "grey80", linewidth = 1, linetype = "longdash") +
+  geom_point(shape = 21, fill = "blue3", color = "black", size = 4) +
+  geom_text(aes(label = comma(Frequency)), hjust = -0.3, size = 3) +
+  scale_x_continuous(labels = comma, expand = expansion(mult = c(0, 0.15))) +
+  labs(
+    title = "Distribution of Observations, by LSOA Area",
+    subtitle = "West Yorkshire Police, Apr to Sept 2020",
+    y = "Crime Type",
+    x = "Frequency") +
+  theme(legend.position = "none")
+
+  # Locatiom
+Location_counts <- table(Crimes$Location, useNA = "ifany") %>%
+  as.data.frame() %>%
+  mutate(
+    Location = as.character(Var1),
+    Location = ifelse(is.na(Location), "Missing Data", Location)
+  ) %>%
+  select(Location, Frequency = Freq) %>%
+  arrange(desc(Frequency)) %>%
+  slice_head(n = 40)
+
+ggplot(
+  data = Location_counts, 
+  aes(x = Frequency, y = reorder(Location, Frequency))) +
+  geom_segment(aes(x = 0, xend = Frequency, 
+                   y = reorder(Location, Frequency), 
+                   yend = reorder(Location, Frequency)),
+               color = "grey80", linewidth = 1, linetype = "longdash") +
+  geom_point(shape = 21, fill = "blue3", color = "black", size = 4) +
+  geom_text(aes(label = comma(Frequency)), hjust = -0.5, size = 2.6) +
+  scale_x_continuous(labels = comma, expand = expansion(mult = c(0, 0.15))) +
+  labs(
+    title = "Distribution of Observations, by Location",
+    subtitle = "West Yorkshire Police, Apr to Sept 2020",
+    y = "Crime Type",
+    x = "Frequency") +
+  theme(legend.position = "none")
+
+# Lat/Long
+#### Convert those with co-ordinates into an sf and plot
+Crimes_sf <- Crimes %>%
+  filter(!is.na(Latitude) & !is.na(Longitude)) %>%   
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326)
+
+ggplot(Crimes_sf) + geom_sf()
+# Many of the co-ordinates are impossible - England as a whole has a latitude between 49 and 56, and a longitude between -6.4 and 1.8
+# But many points fall outside this, so we can remove their co-ordinates as they are inaccurate
+Crimes <- Crimes %>%
+  mutate(LatLong_Flag = (Latitude < 49 | Latitude > 56 | Longitude < -6 | Longitude > 2))
+
+Crimes_sf2 <- Crimes %>%
+  filter(!is.na(Latitude) & !is.na(Longitude)) %>%  
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326)
+
+Crimes_sf2 %>%
+  filter(!LatLong_Flag) %>%
+  ggplot(aes(col = LatLong_Flag)) +
+  geom_sf()
+
+# more of the values seem to be misplaced, but colouring by LSOA.area may confirm this (i.e. if there are 'strays')
+Crimes_sf2 %>%
+  filter(!LatLong_Flag) %>%
+  ggplot(aes(col = LSOA.area)) +
+  geom_sf() + 
+  theme(legend.position = "none")
+#They look to be legitimate - although some remaining co-ordinates appear to be outside West Yorkshire, they are labelled correctly and may have been reported to WYP
+
+Crimes_sf2 %>%
+  filter(LatLong_Flag) %>%
+  ggplot(aes(col = LSOA.area)) +
+  geom_sf() 
+# The majority of 'impossible' co-ordinates do have an LSOA.name, which we can use to impute the location (with a little noise to prevent duplicate locations)
+Crimes_imputed <- Crimes %>%
+  mutate(
+    Latitude = if_else(LatLong_Flag == TRUE, NA, Latitude),
+    Longitude = if_else(LatLong_Flag == TRUE, NA, Longitude)
+  ) %>%
+  group_by(LSOA.name) %>%
+  mutate(
+    Longitude = if_else(
+      is.na(Longitude) & length(Longitude[!is.na(Longitude)]) > 0,
+      sample(Longitude[!is.na(Longitude)], 1) + runif(1, -0.0005, 0.0005),
+      Longitude
+    ),
+    Latitude = if_else(
+      is.na(Latitude) & length(Latitude[!is.na(Latitude)]) > 0,
+      sample(Latitude[!is.na(Latitude)], 1) + runif(1, -0.0005, 0.0005),
+      Latitude
+    )
+  ) %>%
+  ungroup()
 
 
 # Correct missing 'Month' Values (may need to adjust later commentary)
@@ -242,28 +375,12 @@ ggplot(
 
 
 
-print("sss")
 
 
 
 
-LSOAs <- st_read("Datasets//LSOAs//LSOA_2021_EW_BSC_V4.shp")
-names(LSOAs)
-ggplot(data = LSOAs) +
-  geom_sf() 
-
-points = na.omit(distinct(Crimes[,c("Longitude", "Latitude", "LSOA.name", "Dataset")]))
-
-LSOAs <- st_transform(LSOAs, crs = 4326)
-points_sf <- st_as_sf(points, coords = c("Longitude", "Latitude"), crs = 4326)
-
-ggplot(LSOAs) + geom_sf()
-ggplot(points_sf) + geom_sf()
-
-ggplot(LSOAs) + geom_sf() + geom_sf(data=points_sf,aes(col=LSOA.name)) + theme(legend.position = "none")
 
 
-head(Crimes)
 
 # Examing data structure
 # Explore missingness
