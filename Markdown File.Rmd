@@ -1,0 +1,343 @@
+---
+title: "Police Reported Crime Trends"
+author: "Scott Trowers"
+date: "2025-06-21"
+output:
+  word_document: default
+  html_document: default
+  pdf_document:
+    latex_engine: xelatex
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+An analysis of crime data reported to West Yorkshire Police, from April to September 2020. 6 datasets each cover a one month period, with between 21,785 and 29,433 observations. The datasets for April and July have 12 columns, and the rest 13.
+
+## Pre-Processing
+Libraries and Settings:
+```{r, echo = TRUE, results = "hide", message = FALSE}
+library(visdat)
+library(tidyverse)
+library(sf)
+library(ggplot2)
+library(ggExtra)
+library(plotly)
+library(pals)
+library(scales)
+library(lubridate)
+library(skimr)
+theme_set(theme_minimal() + theme(plot.title = element_text(hjust = 0.5)))
+set.seed(5)
+```
+Define Functions:
+```{r}
+unique_values_per_month <- function(col_name, df = Crimes) {
+  
+  # Check if a column is unique to each monthly dataset
+  df %>%
+    filter(!is.na(.data[[col_name]])) %>%
+    group_by(Dataset) %>%
+    summarise(is_unique_per_month = (n_distinct(.data[[col_name]]) == n())) %>%
+    pivot_wider(names_from = Dataset, values_from = is_unique_per_month)}
+```
+Load the datasets:
+```{r, echo = TRUE, results = "hide"}
+dataset_list <- list(
+  Apr_Crimes = read.csv("Datasets//2020-04//2020-04-west-yorkshire-street.csv", na.strings=c(""," ","NA")),
+  May_Crimes = read.csv("Datasets//2020-05//2020-05-west-yorkshire-street.csv", na.strings=c(""," ","NA")),
+  Jun_Crimes = read.csv("Datasets//2020-06//2020-06-west-yorkshire-street.csv", na.strings=c(""," ","NA")),
+  Jul_Crimes = read.csv("Datasets//2020-07//2020-07-west-yorkshire-street.csv", na.strings=c(""," ","NA")),
+  Aug_Crimes = read.csv("Datasets//2020-08//2020-08-west-yorkshire-street.csv", na.strings=c(""," ","NA")),
+  Sep_Crimes = read.csv("Datasets//2020-09//2020-09-west-yorkshire-street.csv", na.strings=c(""," ","NA")))
+```
+Compare the datasets to check for any missing columns or inconsistent datatypes (and if they therefore can be combined):
+```{r}
+janitor::compare_df_cols(dataset_list, return = "mismatch", bind_method = "rbind")
+```
+All columns are of the same type, however the April data is missing the *Reported.by* column and July is missing the *Fall.within* column. Using dplyr's *bind_rows()* function will still be able to combine these datasets, and create a *Dataset* column to indicate which set each row belonged to:
+```{r}
+Crimes <- bind_rows(.id = "Dataset",
+  Apr = dataset_list[[1]],
+  May = dataset_list[[2]],
+  Jun = dataset_list[[3]],
+  Jul = dataset_list[[4]],
+  Aug = dataset_list[[5]],
+  Sep = dataset_list[[6]])
+```
+# Exploratory Data Analysis
+Visualise the data:
+```{r}
+Crimes %>% select(-Dataset) %>% dim()
+Crimes %>% select(-Dataset) %>% vis_dat(warn_large_data = FALSE)
+Crimes %>% select(-Dataset) %>% vis_miss(warn_large_data = FALSE, sort_miss = TRUE)
+```
+The dataset has 158,898 observations and 13 columns (excluding the *Dataset* column). The *Context* column is entirely empty (and can therefore be dropped), 3 columns are numeric (*X, Latitude, Longitude*), and the other 9 are qualitative data. Descriptions of the columns are available at https://data.police.uk/about/. 14.7% of the data is missing; in addition to the missing *Reported.by* and *Falls.within* columns for April and July, 20% of observations are missing *Last.outcome.category* and *Crime.ID* data. 3% of observations are missing locational data (the *LSOA.code, LSOA.name, Longitude,* and *Latitude* columns). 1% of observations only contain values for *X* and *Crime.ID*.
+```{r}
+Crimes$Context = NULL
+```
+
+
+## Single Variate Analysis:
+### Qualitative Columns
+```{r}
+skim(Crimes) %>% yank("character")
+```
+All qualitative columns (except our created *Dataset* column) show some missing observations, ranging from approximately 1.3% of *Location*, *Month* and *Crime.type*, to almost 20% of *Falls.within* and *Reported.by*. The latter two of these columns only contain one unique (non-NA) value throughout the dataset (both of these being "West Yorkshire Police"), and can therefore be dropped. *NB: the police data website says this may change in future datasets, so may be valuable to analyise in the future.*
+```{r}
+Crimes <- Crimes %>% select(-Falls.within, -Reported.by)
+```
+
+
+#### Crime.ID
+*Crime.ID* is a hashed version of the offence reference code. It is missing data for 18.7% of observations, and (as per the code below) is entirely unique within each month. As these IDs are unique identifiers for each crime reference, they are redundant to the analysis.
+```{r}
+unique_values_per_month(col_name = "Crime.ID")
+```
+```{r}
+Crimes$Crime.ID = NULL
+```
+
+#### Month
+*Month* is the month of the reported crime, in the format "YYYY-MM", with 1.26% of observations missing data.
+Check *Month* values align with the dataset they came from:
+```{r}
+Crimes %>%
+  group_by(Dataset) %>%
+  summarise(min_month = min(Month, na.rm = TRUE),  max_month = max(Month, na.rm = TRUE), num_NAs = sum(is.na(Month)))
+```
+However, as the existing values align with the *Dataset* they came from (above), the missing data can be inferred from this column:
+```{r}
+Crimes$Month.imputed <- as.Date(paste0("2020-", sprintf("%02d", match(Crimes$Dataset, month.abb)), "-01"))
+```
+Count and plot the number of crimes per *Month.imputed*:
+```{r}
+Crimes %>%
+  group_by(Month.imputed) %>%
+  summarise(Count = n()) %>% # Count the observations per month
+  mutate(Proportion = Count / sum(Count)) %>%   # Calculate proportion of all observations
+  ggplot(aes(x = Month.imputed, y = Count)) +
+    geom_line(color = "blue1", linewidth = 1, linetype = "dotted", alpha = 0.6) +
+    geom_point(shape = 21, fill = "blue3", size = 3) +
+    geom_text(aes(label = paste0(comma(Count), "\n(", scales::percent(Proportion, accuracy = 0.1), ")")),
+              vjust = 1.5, size = 3.5) +
+    scale_y_continuous(limits = c(0, NA), labels = comma) +
+    labs(title = "Number and Proportion of Crimes Reported Per Month", y = "Number of Crimes", x = "Month")
+```
+The number of crimes reported initially increases each month (from 21,785 in April to 29,278 in July), before plateauing in August (29,433 crimes reported) and decreasing again in September (to 27,015). This shows a trend of an increasing number of crimes being reported as year moved through the Summer months, before this trend reversed as Autumn approached. This may indicate that future analysis incorporating seasonal data such as weather and temperature data, or local population and events data (such as sports events, festivals, etc.), may be valuable.
+
+#### Crime.type
+*Crime.type* categorises the type of offence reported and refers to one of fourteen 'Home Office Offence Codes' (in addition to an *"Exclusive"* Crime.type).
+```{r}
+Crimes %>%
+  group_by(Crime.type) %>%
+  summarise(Count = n()) %>% # Count the observations per month
+  ggplot(aes(y = reorder(Crime.type, Count), x = Count)) +
+    geom_segment(aes(yend = Crime.type, xend = 0), color = "grey50", linetype = "dashed") +
+    geom_point(shape = 21, fill = "blue3", size = 4) +
+    geom_text(aes(label = comma(Count)), size = 3, hjust = -0.5) +
+    scale_x_continuous(labels = comma, expand = expansion(mult = c(0, 0.2))) + 
+    labs(title = "Occurences of Crime Types", x = "Number of Crimes Reported", y = "Crime Type")
+```
+'Violent and sexual offences' was by far the most common crime type, being reported 57,483 times and accounting for 36.2% of all crimes reported. 'Anti-social behaviour' (29,314 reports) was the next most reported, accounting for 18.4% of reports. Other categories such as 'Public order' and 'Criminal damage and arson' also make up significant portions of the crimes reported, while different types of thefts and burglaries combined account for 14.6% (for a total of 23,195) of crimes reported. 'Exclusive' crimes only occur 119 times in the data - however this category is not included as part of the Home Office Offence Codes, and it is unclear what these refer to. Furthermore, 2,000 observations are missing the Crime.type.
+
+#### LSOA.name and LSOA.code
+These refer to the areas provided by the ONS, splitting the country into smaller areas. As they have a one-to-one relationship (below), *LSOA.code* is redundant compared to the more descriptive *LSOA.name*. 
+```{r}
+Crimes %>%
+  filter(!is.na(LSOA.name)) %>%
+  group_by(LSOA.name) %>%
+  summarise(Count = n(), .groups = 'drop') %>%
+  {ggplot(., aes(x = Count)) +
+      geom_histogram(binwidth = 20, fill = "royalblue2", color = "black") +
+      geom_text(
+        data = . %>% top_n(3),
+        aes(x = Count, y = 15, label = paste0(LSOA.name, "\n(", comma(Count), ")")),
+        hjust = 0.5,size = 2.7, fontface = "bold") +
+      labs(y = "Frequency", x="Crime Count", title="Crime Count per LSOA Name")}
+```
+There are 1,418 unique LSOA.names, falling into 15 LSOA.areas. The mean number of crimes reported in an LSOA.name is 108.2, however the distribution of these counts varies significantly, from twenty LSOAs having just 1 crime reported, up to 1,514 in Leeds 111B. The distribution of these counts are therefore heavily right-skewed by a small number of LSOAs.
+
+*LSOA.name* can be grouped further, by removing the coded part of each value, to extract the broader area name:
+```{r}
+Crimes$LSOA.area = sub("\\s\\d+[A-Z]$", "", Crimes$LSOA.name)
+Crimes %>%
+  group_by(LSOA.area) %>%
+  summarise(Count = n(), .groups = 'drop') %>%
+  ggplot(aes(x = Count, y = reorder(LSOA.area, Count))) +
+  geom_segment(aes(x = 0, xend = Count, 
+                   y = reorder(LSOA.area, Count), 
+                   yend = reorder(LSOA.area, Count)),
+               color = "grey80", linewidth = 1, linetype = "longdash") +
+  geom_point(shape = 21, fill = "royalblue2", color = "black", size = 4) +
+  geom_text(aes(label = comma(Count),x = Count + 3000), size = 3) +
+  scale_x_continuous(labels = comma, expand = expansion(mult = c(0, 0.15))) +
+  labs(
+    title = "Number of Observations per LSOA Area",
+    y = "LSOA Area",
+    x = "Frequency") 
+
+```
+Leeds and Bradford receive by far the most crimes reported (53,562 and 39,722, respectively), with Kirklees (24,422), Wakefield (22,231) and Calderdale (13,354) also receiving significant reports. The remaining ten LSOA areas only received a combined 119 reports - however the remainings LSOAs are not part of West Yorkshire. While this does not necessarily mean they are errors (as they may have still been reported to and/or involve West Yorkshire Police), it does explain the low counts.
+
+#### Location
+```{r}
+Crimes %>%
+  group_by(Location) %>%
+  summarise(Count = n(), .groups = 'drop') %>% top_n(20) %>%
+  ggplot(aes(x = Count, y = reorder(Location, Count))) +
+  geom_segment(aes(x = 0, xend = Count, 
+                   y = reorder(Location, Count), 
+                   yend = reorder(Location, Count)),
+               color = "grey80", linewidth = 1, linetype = "longdash") +
+  geom_point(shape = 21, fill = "royalblue2", color = "black", size = 4) +
+  geom_text(aes(label = comma(Count),x = Count + 200), size = 3) +
+  scale_x_continuous(labels = comma, expand = expansion(mult = c(0, 0.15))) +
+  labs(
+    title = "Number of Observations per Location",
+    y = "LSOA Area",
+    x = "Frequency") 
+```
+Location is a qualitative description of the location, with 1.3% of observations missing data and a further 3.5% of observations taking the value "No Location". This data is incredibly varied, with 18.711 unique values, which often refers to street and road names. Outside of these road names, some further trends can be seen in the data, with a significant number of crimes reported at Supermarkets (3,125), Parking Areas (2,525) and Sports Areas (2,366)
+
+#### Last.outcome.category
+This columns refers to the final outcome of the investigation, taking one of thirteen values. 31,334 (19.7%) observations lack data in this column, however the 29,314 of these relate to the 'Anti-social behaviour' crime type, with the remainder split between NA (2000) and Exclusive (20) crime types. The [police.data.uk](https://www.police.uk/pu/about-police.uk-crime-data/) website reveals this to be a known issue, as reported anti-social behaviour is dealt with by external agencies. These outcomes can be broadly grouped together:
+```{r}
+Crimes <- Crimes %>%  mutate(Outcome.group = case_when(
+    Last.outcome.category %in% c("Offender given penalty notice", "Suspect charged as part of another case", "Offender given a caution") ~ "Prosecution/Formal Action",
+    Last.outcome.category %in% c("Awaiting court outcome", "Court result unavailable") ~ "Court-result unknown",
+    Last.outcome.category %in% c("Local resolution", "Action to be taken by another organisation") ~ "Alternative Action",
+    Last.outcome.category %in% c("Further action is not in the public interest", "Formal action is not in the public interest", "Further investigation is not in the public interest") ~ "Further Action not in Public Interest",
+    Last.outcome.category %in% c("Investigation complete; no suspect identified", "Unable to prosecute suspect") ~ "Inconclusive Investigation",
+    Last.outcome.category == "Status update unavailable" | is.na(Last.outcome.category) ~ "Unknown/NA"))
+
+ Crimes %>%
+   group_by(Last.outcome.category, Outcome.group) %>%
+   summarise(Count = n(), .groups = 'drop') %>%
+   ggplot(aes(x = Count, y = reorder(Last.outcome.category, Count), fill=Outcome.group)) +
+   geom_segment(aes(x = 0, xend = Count, 
+                    y = reorder(Last.outcome.category, Count), 
+                    yend = reorder(Last.outcome.category, Count)),
+                color = "grey80", linewidth = 1, linetype = "longdash") +
+   geom_point(shape = 21, color = "black", size = 4) +
+   geom_text(aes(label = comma(Count), x= Count + 1000, hjust=-0.3), size = 3) +
+   scale_x_continuous(labels = comma, expand = expansion(mult = c(0, 0.3))) +
+   labs(
+     title = "Number of Observations per Last.outcome.category",
+     y = "LSOA Area",
+     x = "Frequency")
+```
+In addition to the missing data, the majority of observations did not lead to any recorded outcome, with the most common outcome being 'unable to prosecute suspect' (63,395) and 'no suspect identified' (43,585). In a further 1,540 cases, further action was not deemed to be in the public interest. Just 15,439 reports (9.7% of observations) had a further outcome; 1,317 had confirmed action taken by the police, 3,416 had alternative action by external parties, and 10,575 had an unknown court result. This highlights the significant portion of reported crimes which are unable to concluded with significant action.
+
+
+
+
+## Quantitative Columns
+```{r}
+summary(Crimes[,c("X", "Latitude", "Longitude")])
+```
+#### X
+```{r}
+head(Crimes$X, 10)
+```
+Check if *X* is unique per *Month*:
+```{r}
+unique_values_per_month(col_name = "X")
+```
+*X* appears to simply be the row number for each observation per month, and is unique within each month, making it redundant to our analysis.
+
+#### Latitude and Longitude
+*Latitude* and *Longitude* are approximate coordinates for the reported crime (in the WGS84 coordinate system), and they are each missing data for 3.5% of observations.
+
+Plot the co-ordinates:
+```{r, warning=FALSE}
+ggMarginal(ggplot(Crimes, aes(y = Latitude, x = Longitude,)) +
+          geom_point(alpha = 0.5) +
+          labs(y = "Latitude", x = "Longitude") + ggtitle("Latitude vs Longitude, with Marginal Boxplots"), 
+            type = "boxplot")
+```
+*Longitude* ranges between -99.3 and 98.2, whilst *Latitude* ranges between -96.4 and 99.5. However, as a map of England only ranges between approximately 49.5 to 55.5 latitude and -5.5 to 1.5 longitude, these values cannot be possible. The coordinates of these impossible value can instead be imputed using the LSOA.name to approximate the true location:
+```{r}
+Crimes.imputed = Crimes %>% 
+  mutate(LatLong_Flag = (Latitude < 49 | Latitude > 56 | Longitude < -6 | Longitude > 2)) %>% # Flag impossible values
+  group_by(LSOA.name) %>%
+  mutate( 
+    median_lat = median(Latitude[!LatLong_Flag], na.rm = TRUE), # Get the median Lat/Lon from valid entries within each LSOA
+    median_long = median(Longitude[!LatLong_Flag], na.rm = TRUE),
+    Latitude = ifelse(LatLong_Flag, median_lat + runif(n(), -0.002, 0.002), Latitude), # When the value is impossible, 
+    Longitude = ifelse(LatLong_Flag, median_long + runif(n(), -0.002, 0.002), Longitude)) %>% # Take the average co-ordinate of the LSOA.name
+  ungroup() %>% select(-median_lat, -median_long, -Dataset, -X, -Month, -LSOA.code, -LatLong_Flag)
+
+England.map = st_read("Datasets\\English Counties\\united-kingdom-ceremonial-county-boundaries.shp")
+
+Crimes.sf = Crimes.imputed %>% filter(!is.na(Latitude) & !is.na(Longitude)) %>%
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) 
+  
+ggplot(England.map) + geom_sf(fill="#FAFFFA") + geom_sf(data=Crimes.sf, aes(col=LSOA.area)) + 
+  scale_colour_manual(values=unname(cols25()))
+```
+All points now look correct - although some remain outside West Yorkshire, the LSOA.area is labelled correctly and they may have been reported to and/or involve West Yorkshire Police.
+
+## Multi-Variate Analysis:
+Month, LatLong, LSOA.name/area, Crime.type, Last.outcome.category/Outcome.group
+#### Trends over time:
+```{r}
+# 
+ Crimes %>%
+   group_by(Month, LSO) %>%
+   summarise(Count = n(), .groups = 'drop')
+```
+
+
+
+
+To do:
+Plot crime types and outcomes over time
+plot LSOAs over time
+look for association between crime type and outcome
+mosaic/doubledecker plots, use chi2, Correspondance analysis
+heatmap, faceted by year, type, outcome
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
