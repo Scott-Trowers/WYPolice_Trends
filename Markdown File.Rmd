@@ -14,7 +14,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 An analysis of crime data reported to West Yorkshire Police, from April to September 2020. 6 datasets each cover a one month period, with between 21,785 and 29,433 observations. The datasets for April and July have 12 columns, and the rest 13.
 
-## Pre-Processing
+### Pre-Processing
 Libraries and Settings:
 ```{r, echo = TRUE, results = "hide", message = FALSE}
 library(visdat)
@@ -22,20 +22,21 @@ library(tidyverse)
 library(sf)
 library(ggplot2)
 library(ggExtra)
-library(plotly)
 library(pals)
 library(scales)
 library(lubridate)
 library(skimr)
+library(vcd)
+library(FactoMineR)
+library(factoextra)
+library(gplots)
 theme_set(theme_minimal() + theme(plot.title = element_text(hjust = 0.5)))
 set.seed(5)
 ```
 Define Functions:
 ```{r}
 unique_values_per_month <- function(col_name, df = Crimes) {
-  
-  # Check if a column is unique to each monthly dataset
-  df %>%
+  df %>% # Check if a column is unique to each monthly dataset
     filter(!is.na(.data[[col_name]])) %>%
     group_by(Dataset) %>%
     summarise(is_unique_per_month = (n_distinct(.data[[col_name]]) == n())) %>%
@@ -65,8 +66,7 @@ Crimes <- bind_rows(.id = "Dataset",
   Aug = dataset_list[[5]],
   Sep = dataset_list[[6]])
 ```
-# Exploratory Data Analysis
-Visualise the data:
+### Exploratory Data Analysis
 ```{r}
 Crimes %>% select(-Dataset) %>% dim()
 Crimes %>% select(-Dataset) %>% vis_dat(warn_large_data = FALSE)
@@ -77,17 +77,15 @@ The dataset has 158,898 observations and 13 columns (excluding the *Dataset* col
 Crimes$Context = NULL
 ```
 
-
 ## Single Variate Analysis:
 ### Qualitative Columns
 ```{r}
 skim(Crimes) %>% yank("character")
 ```
-All qualitative columns (except our created *Dataset* column) show some missing observations, ranging from approximately 1.3% of *Location*, *Month* and *Crime.type*, to almost 20% of *Falls.within* and *Reported.by*. The latter two of these columns only contain one unique (non-NA) value throughout the dataset (both of these being "West Yorkshire Police"), and can therefore be dropped. *NB: the police data website says this may change in future datasets, so may be valuable to analyise in the future.*
+All qualitative columns (except our created *Dataset* column) show some missing observations, ranging from approximately 1.3% of *Location*, *Month* and *Crime.type*, to almost 20% of *Falls.within* and *Reported.by*. The latter two of these columns only contain one unique (non-NA) value throughout the dataset (both of these being "West Yorkshire Police"), and can therefore be dropped. *NB: the police data website says this may change in future datasets, so may be valuable to analyse in the future.*
 ```{r}
 Crimes <- Crimes %>% select(-Falls.within, -Reported.by)
 ```
-
 
 #### Crime.ID
 *Crime.ID* is a hashed version of the offence reference code. It is missing data for 18.7% of observations, and (as per the code below) is entirely unique within each month. As these IDs are unique identifiers for each crime reference, they are redundant to the analysis.
@@ -178,8 +176,10 @@ Crimes %>%
     x = "Frequency") 
 
 ```
-Leeds and Bradford receive by far the most crimes reported (53,562 and 39,722, respectively), with Kirklees (24,422), Wakefield (22,231) and Calderdale (13,354) also receiving significant reports. The remaining ten LSOA areas only received a combined 119 reports - however the remainings LSOAs are not part of West Yorkshire. While this does not necessarily mean they are errors (as they may have still been reported to and/or involve West Yorkshire Police), it does explain the low counts.
-
+Leeds and Bradford receive by far the most crimes reported (53,562 and 39,722, respectively), with Kirklees (24,422), Wakefield (22,231) and Calderdale (13,354) also receiving significant reports. The remaining ten LSOA areas only received a combined 119 reports - however the remainings LSOAs are not part of West Yorkshire. While this does not necessarily mean they are errors, it makes them less relevant to an analysis of trends in West Yorkshire.
+```{r}
+Crimes <- Crimes %>% filter(LSOA.area %in% c("Leeds", "Bradford", "Kirklees", "Wakefield", "Calderdale") | is.na(LSOA.area))
+```
 #### Location
 ```{r}
 Crimes %>%
@@ -198,10 +198,10 @@ Crimes %>%
     y = "LSOA Area",
     x = "Frequency") 
 ```
-Location is a qualitative description of the location, with 1.3% of observations missing data and a further 3.5% of observations taking the value "No Location". This data is incredibly varied, with 18.711 unique values, which often refers to street and road names. Outside of these road names, some further trends can be seen in the data, with a significant number of crimes reported at Supermarkets (3,125), Parking Areas (2,525) and Sports Areas (2,366)
+Location is a qualitative description of the location, with 1.3% of observations missing data and a further 2.1% of observations taking the value "No Location". This data is incredibly varied, with 18.688 unique values, which often refers to street names. Outside of these street names some further trends can be seen in the data, with a significant number of crimes reported at Supermarkets (3,125), Parking Areas (2,524) and Sports Areas (2,362)
 
 #### Last.outcome.category
-This columns refers to the final outcome of the investigation, taking one of thirteen values. 31,334 (19.7%) observations lack data in this column, however the 29,314 of these relate to the 'Anti-social behaviour' crime type, with the remainder split between NA (2000) and Exclusive (20) crime types. The [police.data.uk](https://www.police.uk/pu/about-police.uk-crime-data/) website reveals this to be a known issue, as reported anti-social behaviour is dealt with by external agencies. These outcomes can be broadly grouped together:
+This columns refers to the final outcome of the investigation, taking one of thirteen values. 31,263 (19.7%) observations lack data in this column, however 29,243 of these relate to the 'Anti-social behaviour' crime type, with the remainder split between NA (2000) and Exclusive (20) crime types. The [police.data.uk](https://www.police.uk/pu/about-police.uk-crime-data/) website reveals this to be a known issue, as reported anti-social behaviour is dealt with by external agencies. These outcomes can be broadly grouped together:
 ```{r}
 Crimes <- Crimes %>%  mutate(Outcome.group = case_when(
     Last.outcome.category %in% c("Offender given penalty notice", "Suspect charged as part of another case", "Offender given a caution") ~ "Prosecution/Formal Action",
@@ -221,16 +221,13 @@ Crimes <- Crimes %>%  mutate(Outcome.group = case_when(
                 color = "grey80", linewidth = 1, linetype = "longdash") +
    geom_point(shape = 21, color = "black", size = 4) +
    geom_text(aes(label = comma(Count), x= Count + 1000, hjust=-0.3), size = 3) +
-   scale_x_continuous(labels = comma, expand = expansion(mult = c(0, 0.3))) +
+   scale_x_continuous(labels = comma, expand = expansion(mult = c(0, 0.4))) +
    labs(
      title = "Number of Observations per Last.outcome.category",
      y = "LSOA Area",
      x = "Frequency")
 ```
-In addition to the missing data, the majority of observations did not lead to any recorded outcome, with the most common outcome being 'unable to prosecute suspect' (63,395) and 'no suspect identified' (43,585). In a further 1,540 cases, further action was not deemed to be in the public interest. Just 15,439 reports (9.7% of observations) had a further outcome; 1,317 had confirmed action taken by the police, 3,416 had alternative action by external parties, and 10,575 had an unknown court result. This highlights the significant portion of reported crimes which are unable to concluded with significant action.
-
-
-
+In addition to the missing data, the majority of observations did not lead to any recorded outcome, with the most common outcome being 'unable to prosecute suspect' (63,380) and 'no suspect identified' (43,562). In a further 1,539 cases, further action was not deemed to be in the public interest. Just 15,434 reports (9.7% of observations) had a further outcome; 1,317 had confirmed action taken by the police, 3,414 had alternative action by external parties, and 10,703 had an unknown court result. This highlights the significant portion of reported crimes which are unable to concluded with significant action.
 
 ## Quantitative Columns
 ```{r}
@@ -256,7 +253,7 @@ ggMarginal(ggplot(Crimes, aes(y = Latitude, x = Longitude,)) +
           labs(y = "Latitude", x = "Longitude") + ggtitle("Latitude vs Longitude, with Marginal Boxplots"), 
             type = "boxplot")
 ```
-*Longitude* ranges between -99.3 and 98.2, whilst *Latitude* ranges between -96.4 and 99.5. However, as a map of England only ranges between approximately 49.5 to 55.5 latitude and -5.5 to 1.5 longitude, these values cannot be possible. The coordinates of these impossible value can instead be imputed using the LSOA.name to approximate the true location:
+*Longitude* ranges between -99.3 and 98.2, whilst *Latitude* ranges between -96.4 and 99.5. However, as a map of England only ranges between approximately 49.5 to 55.5 latitude and -5.5 to 1.5 longitude, these values cannot be possible. The coordinates of these impossible values can instead be imputed using the LSOA.name to approximate the true location:
 ```{r}
 Crimes.imputed = Crimes %>% 
   mutate(LatLong_Flag = (Latitude < 49 | Latitude > 56 | Longitude < -6 | Longitude > 2)) %>% # Flag impossible values
@@ -273,19 +270,96 @@ England.map = st_read("Datasets\\English Counties\\united-kingdom-ceremonial-cou
 Crimes.sf = Crimes.imputed %>% filter(!is.na(Latitude) & !is.na(Longitude)) %>%
   st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) 
   
-ggplot(England.map) + geom_sf(fill="#FAFFFA") + geom_sf(data=Crimes.sf, aes(col=LSOA.area)) + 
+ggplot(England.map) + geom_sf(fill="#FAFFFA") + geom_sf(data=Crimes.sf, aes(col=LSOA.area), alpha=0.5) + 
   scale_colour_manual(values=unname(cols25()))
 ```
-All points now look correct - although some remain outside West Yorkshire, the LSOA.area is labelled correctly and they may have been reported to and/or involve West Yorkshire Police.
-
 ## Multi-Variate Analysis:
 Month, LatLong, LSOA.name/area, Crime.type, Last.outcome.category/Outcome.group
 #### Trends over time:
+Heatmap of crime reports each month:
 ```{r}
-# 
- Crimes %>%
-   group_by(Month, LSO) %>%
-   summarise(Count = n(), .groups = 'drop')
+hex_grid <- st_make_grid(Crimes.sf, cellsize = 0.015, square = FALSE) %>% st_sf() %>%
+  st_join(Crimes.sf) %>%
+  group_by(geometry, Month.imputed) %>% 
+  summarise(Crime.count = n(), .groups = "drop") %>%
+  filter(Crime.count > 1) 
+
+ggplot() + # Plot and facet by Month
+  geom_sf(data = England.map, fill = "darkslateblue", color = "grey70") +
+  geom_sf(data = hex_grid, aes(fill = Crime.count), color = NA) +
+  scale_fill_viridis_c(option = "plasma", trans = "sqrt", name = "Crime Count") +
+  facet_wrap(~ Month.imputed) + labs(title="Heatmap of Crime Reports, by Month") +
+  theme_void() + theme(plot.title = element_text(hjust=0.5))
+```
+
+```{r}
+monthly_summary <- Crimes.imputed %>%
+  group_by(Month.imputed) %>%
+  summarise(
+    total_crimes = n(),
+    target_crimes = sum(!(Outcome.group %in% c("Alternative Action", "Prosecution/Formal Action", "Court-result unknown")), na.rm = TRUE),
+    pct_target = 100 * target_crimes / total_crimes
+  ) %>%
+  ungroup()
+
+cor(monthly_summary$pct_target, monthly_summary$total_crimes, use = "complete.obs")
+
+ggplot(monthly_summary, aes(y = total_crimes, x = pct_target)) +
+  geom_point(color = "darkblue", size = 3) + 
+  geom_path(color = "blue", size = 1, linetype = "dotted") +  # connected line with arrows
+  geom_text(aes(label = format(Month.imputed, "%Y-%m")), vjust = -1, size = 3) +  # label points with month-year
+  labs(
+    title = "Monthly Outcomes with No Recorded Action vs Number of Crimes",
+    y= "Total Number of Crimes",
+    x = "Percentage of No-Action Outcomes (%)"
+  ) 
+```
+
+```{r}
+Crimes.imputed %>% 
+  group_by(Month.imputed, LSOA.area, LSOA.name) %>%
+  summarise(Count = n(), .groups = 'drop') %>%
+  ggplot(aes(x = Month.imputed, y = Count, col = LSOA.name)) +
+  geom_line(linewidth = 1) +
+  facet_wrap(~ LSOA.area, scales = "free_y") + 
+  labs(title = "Crimes Reported by LSOA Name, Faceted by LSOA Area",
+    y = "Crimes Reported", x = "Month") +  theme(legend.position = "none") 
+```
+```{r}
+Crimes.imputed %>% #
+  group_by(Month.imputed, Crime.type) %>%
+  summarise(Count = n(), .groups = 'drop') %>%
+  ggplot(aes(x=Month.imputed, y=Count, col=reorder(Crime.type, -Count))) +
+  geom_line(linewidth=1.2) +
+  scale_colour_manual(values=unname(cols25())) + 
+  labs(title = "Crimes Reported by Crime Type, Over Time", y = "Crimes Reported", x = "Month", colour = "Crime Type")
+
+```
+
+
+```{r}
+Crimes.imputed %>%
+  group_by(Month.imputed, Outcome.group) %>%
+  summarise(Count = n(), .groups = 'drop') %>%
+  ggplot(aes(x=Month.imputed, y=Count, fill=reorder(Outcome.group, -Count))) +
+    geom_area() +
+    scale_fill_manual(values=unname(cols25())) + # Adjust cols25() or palette if Outcome.group has many levels
+    labs(title = "Crimes Reported by Outcome Group, Over Time", y = "Crimes Reported", x = "Month", fill = "Outcome Group")
+```
+
+
+
+```{r}
+mosaicplot(~Crime.type + LSOA.area, data = Crimes.imputed, shade=TRUE) #
+mosaicplot(~Crime.type + Outcome.group, data = Crimes.imputed[!is.na(Crimes.imputed$Last.outcome.category),], shade=TRUE) #
+mosaicplot(~Outcome.group + LSOA.area, data = Crimes.imputed, shade=TRUE) #
+```
+
+
+```{r}
+CA_type_area = Crimes.imputed %>% select(Crime.type, LSOA.area) %>% table() %>% as.matrix() %>% CA() #
+CA_type_outcome = Crimes.imputed %>% select(Crime.type, Outcome.group) %>% table() %>% as.matrix() %>% CA() #
+CA_outcome_area = Crimes.imputed %>% select(Outcome.group, LSOA.area) %>% table() %>% as.matrix() %>% CA()
 ```
 
 
